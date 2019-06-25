@@ -352,7 +352,7 @@ a	int(11)	NO	PRI	NULL
 insert into t1 (a) values (3);
 show columns from t1;
 Field	Type	Null	Key	Default	Extra
-a	int(11)	NO	PRI	NULL	
+a	int(11)	YES	PRI	NULL	
 drop table t1;
 create table t1 (
 pk int primary key,

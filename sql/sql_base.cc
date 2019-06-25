@@ -8953,6 +8953,29 @@ void switch_to_nullable_trigger_fields(List<Item> &items, TABLE *table)
 
     while ((item= it++))
       item->walk(&Item::switch_to_nullable_fields_processor, 1, (uchar*)field);
+    uint16 cnt=0;
+    uchar *nptr;
+    nptr= (uchar*)alloc_root(&table->mem_root, (table->s->fields - table->s->null_fields + 7)/8);
+    // First find null_ptr for NULL field in case of mixed NULL and NOT NULL fields
+    for (Field **f=field; *f; f++)
+    {
+      if (table->field[cnt]->null_ptr)
+      {
+        nptr= table->field[cnt]->null_ptr;
+        break;
+      }
+    }
+    for (Field **f=field; *f; f++)
+    {
+        if (!table->field[cnt]->null_ptr)
+        {
+          (*f)->null_bit=1<<(cnt+1);;
+          (*f)->flags&=~(NOT_NULL_FLAG);
+          (*f)->null_ptr=nptr;
+        }
+        cnt++;
+    } 
+    bzero(nptr, (table->s->fields - table->s->null_fields + 7)/8);
     table->triggers->reset_extra_null_bitmap();
   }
 }

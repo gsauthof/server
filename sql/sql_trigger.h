@@ -226,6 +226,10 @@ public:
                      trigger_table->s->null_fields + 7)/8;
     bzero(extra_null_bitmap, null_bytes);
   }
+  uchar *get_extra_null_bitmap() const
+  {
+    return extra_null_bitmap;
+  }
 
 private:
   bool prepare_record_accessors(TABLE *table);

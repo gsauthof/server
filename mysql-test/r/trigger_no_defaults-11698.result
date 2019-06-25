@@ -1,3 +1,6 @@
+#
+# MDEV-11698 Old Bug possibly not fixed; BEFORE INSERT Trigger on NOT NULL
+#
 set sql_mode='strict_all_tables';
 create table t1 (a int not null, b int);
 insert t1 (b) values (1);
@@ -21,6 +24,9 @@ a	b
 0	30
 drop table t1;
 set sql_mode=default;
+#
+# MDEV-11842 Fail to insert on a table where a field has no default
+#
 create table t1 (
 id int(11) not null auto_increment primary key,
 data1 varchar(10) not null,
@@ -38,3 +44,26 @@ id	data1	data2
 1		x
 2		y
 drop table t1;
+#
+# MDEV-19761 - Before Trigger not processed for Not Null Columns
+#
+create database my_test;
+use my_test;
+create table t1( id1 int, id2 int, rate int not null);
+create or replace trigger test_trigger before insert on t1 for each row 
+begin if new.rate is null then set new.rate = 5; end if; end;
+$$
+insert into t1 (id1,id2) values (20,30);
+select * from t1;
+id1	id2	rate
+20	30	5
+drop trigger test_trigger;
+create trigger test_trigger before insert on t1 for each row 
+set new.rate=if(new.rate is null,5,new.rate);
+$$
+insert into t1 (id1,id2) values (20,30);
+select * from t1;
+id1	id2	rate
+20	30	5
+20	30	5
+drop database my_test;

@@ -366,6 +366,8 @@ create trigger trg1 before update on t1 for each row set @a:= @a + new.j - old.j
 create trigger trg2 after update on t1 for each row set @b:= "Fired";
 set @a:= 0, @b:= "";
 update t1, t2 set j = j + 10 where t1.i = t2.i;
+Warnings:
+Warning	1048	Column 'k' cannot be null
 select @a, @b;
 @a	@b
 10	Fired
@@ -1235,11 +1237,13 @@ insert into t1 values (1,1), (2,2), (3,3);
 create trigger t1_bu before update on t1 for each row
 set new.j = new.j + 10;
 update t1 set i= i+ 10 where j > 2;
+Warnings:
+Warning	1048	Column 'j' cannot be null
 select * from t1;
 i	j
 1	1
 2	2
-13	13
+13	0
 drop table t1;
 CREATE TABLE t1 (a INT PRIMARY KEY);
 CREATE TABLE t2 (a INT PRIMARY KEY);

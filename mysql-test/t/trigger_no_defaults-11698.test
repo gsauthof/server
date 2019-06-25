@@ -1,6 +1,6 @@
-#
-# MDEV-11698 Old Bug possibly not fixed; BEFORE INSERT Trigger on NOT NULL
-#
+--echo #
+--echo # MDEV-11698 Old Bug possibly not fixed; BEFORE INSERT Trigger on NOT NULL
+--echo #
 set sql_mode='strict_all_tables';
 create table t1 (a int not null, b int);
 --error ER_NO_DEFAULT_FOR_FIELD
@@ -25,9 +25,9 @@ select * from t1;
 drop table t1;
 set sql_mode=default;
 
-#
-# MDEV-11842 Fail to insert on a table where a field has no default
-#
+--echo #
+--echo # MDEV-11842 Fail to insert on a table where a field has no default
+--echo #
 create table t1 (
   id int(11) not null auto_increment primary key,
   data1 varchar(10) not null,
@@ -38,3 +38,28 @@ create trigger test_trigger before insert on t1 for each row begin end;
 insert into t1 (data2) values ('y');
 select * from t1;
 drop table t1;
+
+--echo #
+--echo # MDEV-19761 - Before Trigger not processed for Not Null Columns
+--echo #
+create database my_test;
+use my_test;
+create table t1( id1 int, id2 int, rate int not null);
+delimiter $$;
+create or replace trigger test_trigger before insert on t1 for each row 
+  begin if new.rate is null then set new.rate = 5; end if; end;
+$$
+delimiter ;$$
+ 
+insert into t1 (id1,id2) values (20,30);
+select * from t1;
+drop trigger test_trigger;
+
+delimiter $$;
+create trigger test_trigger before insert on t1 for each row 
+ set new.rate=if(new.rate is null,5,new.rate);
+ $$
+delimiter ;$$
+insert into t1 (id1,id2) values (20,30);
+select * from t1;
+drop database my_test;
