@@ -19,11 +19,9 @@
 
 
 INCLUDE(innodb.cmake)
+INCLUDE_DIRECTORIES(${PROJECT_SOURCE_DIR}/tpool)
 
 SET(INNOBASE_SOURCES
-	aio/aio_simulated.cc
-	aio/aiocb_cache.h
-	aio/aio.cc
 	btr/btr0btr.cc
 	btr/btr0bulk.cc
 	btr/btr0cur.cc
@@ -62,9 +60,6 @@ SET(INNOBASE_SOURCES
 	ha/ha0ha.cc
 	ha/ha0storage.cc
 	ha/hash0hash.cc
-	include/aio0aio.h
-	include/os0file.h
-	include/tp0tp.h
 	fts/fts0fts.cc
 	fts/fts0ast.cc
 	fts/fts0blex.cc
@@ -133,7 +128,6 @@ SET(INNOBASE_SOURCES
 	sync/sync0rw.cc
 	sync/sync0debug.cc
 	sync/sync0sync.cc
-	tp/threadpool_generic.cc
 	trx/trx0i_s.cc
 	trx/trx0purge.cc
 	trx/trx0rec.cc
@@ -153,16 +147,6 @@ SET(INNOBASE_SOURCES
 	ut/ut0vec.cc
 	ut/ut0wqueue.cc
 	ut/ut0timer.cc)
-
-IF(WIN32)
-	LIST(APPEND INNOBASE_SOURCES
-		aio/aio_win.cc
-		tp/threadpool_win.cc)
-ENDIF()
-IF(CMAKE_SYSTEM_NAME  MATCHES Linux AND HAVE_LIBAIO_H AND HAVE_LIBAIO)
-	LIST(APPEND INNOBASE_SOURCES
-		aio/aio_linux.cc)
-ENDIF()
 MYSQL_ADD_PLUGIN(innobase ${INNOBASE_SOURCES} STORAGE_ENGINE
   MODULE_OUTPUT_NAME ha_innodb
   DEFAULT RECOMPILE_FOR_EMBEDDED
@@ -171,7 +155,8 @@ MYSQL_ADD_PLUGIN(innobase ${INNOBASE_SOURCES} STORAGE_ENGINE
 	${CRC32_LIBRARY}
 	${NUMA_LIBRARY}
 	${LIBSYSTEMD}
-	${LINKER_SCRIPT})
+	${LINKER_SCRIPT}
+	tpool)
 
 IF(NOT TARGET innobase)
   RETURN()

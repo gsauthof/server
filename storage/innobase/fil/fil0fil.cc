@@ -4323,22 +4323,14 @@ fil_io(
 	return(err);
 }
 
-#include <aio0aio.h>
-
+#include <tpool.h>
 /**********************************************************************/
 
 /* Callback for AIO completion */
 void
-fil_aio_callback(native_file_handle fh,
-	aio_opcode opcode,
-	unsigned long long offset,
-	void* buffer,
-	unsigned int len,
-	int ret_len,
-	int err,
-	void* userdata)
+fil_aio_callback(const tpool::aiocb *cb, int ret_len, int err)
 {
-	os_aio_userdata_t *data=(os_aio_userdata_t *)userdata;
+	os_aio_userdata_t *data=(os_aio_userdata_t *)cb->m_userdata;
 	fil_node_t* node= data->node;
 	IORequest	type = data->type;
 	void* message = data->message;

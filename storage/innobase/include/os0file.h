@@ -55,7 +55,7 @@ extern bool	os_has_said_disk_full;
 typedef ib_uint64_t os_offset_t;
 
 #ifdef _WIN32
-#include <aio0aio.h>
+#include <tpool.h>
 typedef HANDLE	os_file_dir_t;	/*!< directory stream */
 
 /** We define always WIN_ASYNC_IO, and check at run-time whether

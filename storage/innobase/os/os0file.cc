@@ -77,10 +77,10 @@ Created 10/21/1995 Heikki Tuuri
 #include <my_sys.h>
 #endif
 
-#include <tp0tp.h>
-#include <aio0aio.h>
-static threadpool::threadpool* tp;
-static aio* aio;
+#include <tpool.h>
+
+static tpool::tpool *pool;
+static Atomic_counter<int> pending_writes;
 
 /** Insert buffer segment id */
 static const ulint IO_IBUF_SEGMENT = 0;
@@ -2652,8 +2652,8 @@ os_file_create_func(
 		}
 	}
 
-	if (*success &&  (attributes & FILE_FLAG_OVERLAPPED) && aio) {
-		aio->bind(file);
+	if (*success &&  (attributes & FILE_FLAG_OVERLAPPED) && pool) {
+		pool->bind(file);
 	}
 	return(file);
 }
@@ -2922,8 +2922,8 @@ os_file_close_func(
 		return false;
 	}
 
-	if(aio)
-		aio->unbind(file);
+	if(pool)
+		pool->unbind(file);
  
 	return(true);
 }
@@ -3954,14 +3954,14 @@ os_file_get_status(
 }
 
 
-extern void fil_aio_callback(native_file_handle fh,
-  aio_opcode opcode,
-  unsigned long long offset,
-  void* buffer,
-  unsigned int len,
-  int ret_len,
-  int err,
-  void* userdata);
+extern void fil_aio_callback(const tpool::aiocb *cb, int ret_len, int err);
+
+static void io_callback(const tpool::aiocb* cb, int ret_len, int err)
+{
+  if (cb->m_opcode == tpool::AIO_PWRITE)
+    pending_writes--;
+  fil_aio_callback(cb,ret_len, err);
+}
 
 #ifdef LINUX_NATIVE_AIO
 /** Checks if the system supports native linux aio. On some kernel
@@ -4093,42 +4093,35 @@ static bool is_linux_native_aio_supported()
 bool os_aio_init(ulint n_reader_threads, ulint n_writer_thread, ulint)
 {
   int max_io_events = (int)((n_reader_threads + n_reader_threads) * (8 * OS_AIO_N_PENDING_IOS_PER_THREAD));
-  if (srv_use_native_aio)
-  {
 #ifdef _WIN32
-    tp = threadpool::create_threadpool_win();
-    aio = create_win_aio(tp, max_io_events);
-#elif defined (LINUX_NATIVE_AIO)
-    tp = threadpool::create_threadpool_generic();
-    aio = nullptr;
-    if (is_linux_native_aio_supported())
-    {
-      aio = create_linux_aio(tp, max_io_events);
-    }
-
-    if(!aio)
-    {
-      ib::warn() << "Linux Native AIO disabled.";
-      srv_use_native_aio = FALSE;
-      aio = create_simulated_aio(tp, n_reader_threads, n_writer_thread);
-    }
+  pool = tpool::create_tpool_win();
+#else
+  pool = tpool::create_tpool_generic();
 #endif
-  }
-  else
+  int ret;
+
+#if LINUX_NATIVE_AIO
+  if (srv_use_native_aio && !is_linux_native_aio_supported())
+    srv_use_native_aio = false;
+#endif
+
+  ret = pool->configure_aio(srv_use_native_aio, max_io_events);
+  if(ret)
   {
-    tp = threadpool::create_threadpool_generic();
-    aio = create_simulated_aio(tp, n_reader_threads, n_writer_thread);
+    DBUG_ASSERT(srv_use_native_aio);
+    srv_use_native_aio = false;
+#ifdef LINUX_NATIVE_AIO
+    ib::info() << "Linux native AIO disabled";
+#endif
+    ret = pool->configure_aio(srv_use_native_aio, max_io_events);
+    DBUG_ASSERT(!ret);
   }
-  aio->set_callback(fil_aio_callback);
   return true;
 }
 
 void os_aio_free(void)
 {
-   delete tp;
-   delete aio;
-   tp = nullptr;
-   aio = nullptr;
+   delete pool;
 }
 
 /** Waits until there are no pending writes. There can
@@ -4136,7 +4129,8 @@ be other, synchronous, pending writes. */
 void
 os_aio_wait_until_no_pending_writes()
 {
-	aio->wait_for_pending_writes();
+	while(pending_writes)
+   os_thread_sleep(1000);
 }
 
 
@@ -4208,10 +4202,27 @@ os_aio_func(
 		ut_error;
 	}
 
-  compile_time_assert(sizeof(os_aio_userdata_t) <= MAX_AIO_USERDATA_LEN);
+  compile_time_assert(sizeof(os_aio_userdata_t) <= tpool::MAX_AIO_USERDATA_LEN);
   os_aio_userdata_t userdata{m1,type,m2};
-  if (!aio->submit_io(file.m_file, type.is_read()?AIO_PREAD:AIO_PWRITE, offset, buf, (uint)n, &userdata, sizeof(userdata)))
+  //DBUG_ASSERT(!type.is_read());
+
+  tpool::aiocb cb;
+  cb.m_buffer = buf;
+  cb.m_callback = io_callback;
+  cb.m_fh = file.m_file;
+  cb.m_len = (int)n;
+  cb.m_offset = offset;
+  cb.m_opcode = type.is_read() ? tpool::AIO_PREAD : tpool::AIO_PWRITE;
+  memcpy(cb.m_userdata, &userdata, sizeof(userdata));
+
+  if (cb.m_opcode == tpool::AIO_PWRITE)
+    pending_writes++;
+
+  if (!pool->submit_io(&cb))
     return DB_SUCCESS;
+  
+  if(cb.m_opcode == tpool::AIO_PWRITE)
+    pending_writes--;
 
   os_file_handle_error(name, type.is_read() ? "aio read" : "aio write");
 
