@@ -128,10 +128,11 @@ public:
 aio* create_linux_aio(tpool* pool, int max_io)
 {
   io_context_t ctx;
+  memset(&ctx, 0, sizeof(ctx));
   int ret = io_setup(max_io, &ctx);
   if (ret)
   {
-    fprintf(stderr, "io_setup(%d) returned  %d\n", max_io, ret);
+    fprintf(stderr, "io_setup(%d) returned %d\n", max_io, ret);
     return nullptr;
   }
   return new aio_linux(ctx, pool, max_io);

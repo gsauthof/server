@@ -3976,6 +3976,7 @@ static bool is_linux_native_aio_supported()
 	io_context_t	io_ctx;
 	char		name[1000];
 
+	memset(&io_ctx, 0, sizeof(io_ctx));
 	if (io_setup(1, &io_ctx)) {
 
 		/* The platform does not support native aio. */
