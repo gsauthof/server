@@ -101,6 +101,8 @@ protected:
     {
       return m_aio->submit_aio(cb);
     }
+    virtual void set_max_threads(int max) = 0;
+    virtual void set_min_threads(int min) = 0;
     virtual ~tpool(){ delete m_aio;}
   };
   extern tpool* create_tpool_generic();

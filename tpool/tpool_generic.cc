@@ -12,7 +12,7 @@
 #include <thread>
 #include <vector>
 #include <tpool.h>
-
+#include <assert.h>
 
 namespace tpool
 {
@@ -65,7 +65,8 @@ class tpool_generic : public tpool
   bool get_task(worker_data *thread_var, task *t);
   bool wait_for_tasks(std::unique_lock<std::mutex> &lk,
                       worker_data *thread_var);
-
+  void timer_start();
+  void timer_stop();
 public:
   tpool_generic();
   ~tpool_generic() { shutdown(); }
@@ -248,6 +249,18 @@ bool tpool_generic::wake(worker_wake_reason reason, const task *t)
   return true;
 }
 
+void tpool_generic::timer_start()
+{
+  m_timer_thread = std::thread(&tpool_generic::timer_main, this);
+}
+
+void tpool_generic::timer_stop()
+{
+  assert(m_in_shutdown || m_max_threads == m_min_threads);
+  m_cv_shutdown.notify_one();
+  m_timer_thread.join();
+}
+
 tpool_generic::tpool_generic()
     : m_tasks(10000), m_standby_threads(), m_mtx(),
       m_thread_timeout(std::chrono::milliseconds(60000)),
@@ -257,13 +270,20 @@ tpool_generic::tpool_generic()
       m_concurrency(std::thread::hardware_concurrency()), m_in_shutdown(),
       m_stopped(), m_min_threads(0), m_max_threads(INT_MAX)
 {
-  m_timer_thread= std::thread(&tpool_generic::timer_main, this);
+  timer_start();
 }
 
 void tpool_generic::set_min_threads(int n)
 {
   std::unique_lock<std::mutex> lk(m_mtx);
+  if (n == m_min_threads)
+    return;
+
+
   m_min_threads= n;
+  if (m_max_threads < n)
+    m_max_threads = n;
+
   for (auto i= m_threads; i < m_min_threads; i++)
     add_thread();
 }
@@ -271,7 +291,12 @@ void tpool_generic::set_min_threads(int n)
 void tpool_generic::set_max_threads(int n)
 {
   std::unique_lock<std::mutex> lk(m_mtx);
+  if (n == m_max_threads)
+    return;
   m_max_threads= n;
+  if (n < m_min_threads)
+    m_min_threads = n;
+
   for (auto i= m_max_threads; i < m_threads; i++)
     wake(WAKE_REASON_DIE);
 }
@@ -332,9 +357,8 @@ void tpool_generic::shutdown()
 
   lk.unlock();
 
-  /* notify timer, too.*/
-  m_cv_shutdown.notify_all();
-  m_timer_thread.join();
+  timer_stop();
+
   m_cv_queue_not_full.notify_all();
   m_stopped= true;
 }

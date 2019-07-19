@@ -7,12 +7,12 @@ namespace tpool
 {
 class tpool_win_aio : public aio
 {
-public:
-  cache<win_aio_cb> m_cache;
   PTP_CALLBACK_ENVIRON m_env;
+  cache<win_aio_cb> m_cache;
+public:
 
   tpool_win_aio(PTP_CALLBACK_ENVIRON env, int max_io)
-      : m_env(env), m_cache(max_io)
+      :m_env(env), m_cache(max_io)
   {
   }
 
@@ -75,26 +75,47 @@ public:
 
 class tpool_win : public tpool
 {
-  PTP_CALLBACK_ENVIRON m_env;
-  aio *m_aio;
-
+  PTP_POOL m_pool;
+  TP_CALLBACK_ENVIRON m_env;
+  PTP_CLEANUP_GROUP m_cleanup;
 public:
-  tpool_win(PTP_CALLBACK_ENVIRON env) : m_env(env), m_aio(0){};
-
+  tpool_win()
+  {
+    InitializeThreadpoolEnvironment(&m_env);
+    m_pool = CreateThreadpool(NULL);
+    m_cleanup = CreateThreadpoolCleanupGroup();
+    SetThreadpoolCallbackPool(&m_env, m_pool);
+    SetThreadpoolCallbackCleanupGroup(&m_env, m_cleanup, 0);
+  }
+  ~tpool_win()
+  {
+    CloseThreadpoolCleanupGroupMembers(m_cleanup, FALSE, NULL);
+    CloseThreadpoolCleanupGroup(m_cleanup);
+    CloseThreadpool(m_pool);
+  }
   virtual void submit(const task *tasks, int size) override
   {
     for (auto i= 0; i < size; i++)
     {
-      if (!TrySubmitThreadpoolCallback(tasks[i].m_func, tasks[i].m_arg, m_env))
+      if (!TrySubmitThreadpoolCallback(tasks[i].m_func, tasks[i].m_arg, &m_env))
         abort();
     }
   }
 
   virtual aio *create_native_aio(int max_io) override
   {
-    return new tpool_win_aio(m_env, max_io);
+    return new tpool_win_aio(&m_env,max_io);
+  }
+
+  virtual void set_max_threads(int n) override
+  {
+    SetThreadpoolThreadMaximum(m_pool,n);
+  }
+  virtual void set_min_threads(int n) override
+  {
+    SetThreadpoolThreadMinimum(m_pool,n);
   }
 };
 
-tpool *create_tpool_win() { return new tpool_win(0); }
+tpool *create_tpool_win() { return new tpool_win(); }
 } // namespace tpool
