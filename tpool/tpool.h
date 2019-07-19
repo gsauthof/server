@@ -79,6 +79,7 @@ protected:
     aio *m_aio;
     virtual aio* create_native_aio(int max_io) = 0;
   public:
+    tpool():m_aio(){}
     virtual void submit(const task* tasks, int size) = 0;
     void submit(const task& t) { submit(&t,1); }
     int configure_aio(bool use_native_aio, int max_io)
