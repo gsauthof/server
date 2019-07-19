@@ -1,8 +1,6 @@
 #include "tpool_structs.h"
 
 #include <stdlib.h>
-#include <libaio.h>
-#include <pthread.h>
 #include <signal.h>
 #include <assert.h>
 #include <tpool.h>
@@ -11,6 +9,7 @@
 namespace tpool
 {
 #ifdef LINUX_NATIVE_AIO
+#include <libaio.h>
 struct linux_iocb : iocb
 {
   aiocb m_aiocb;
