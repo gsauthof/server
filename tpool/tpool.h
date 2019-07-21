@@ -13,15 +13,13 @@ struct native_file_handle
   operator HANDLE() const { return m_handle; }
 };
 #else
-#define  PTP_CALLBACK_INSTANCE void*
-#define  CALLBACK
 #include <unistd.h>
 typedef int native_file_handle;
 #endif
 
 namespace tpool
 {
-  typedef void (CALLBACK *callback_func)(PTP_CALLBACK_INSTANCE,void*);  
+  typedef void (*callback_func)(void*);  
   struct task
   {
     callback_func m_func;
@@ -80,8 +78,7 @@ protected:
     virtual aio* create_native_aio(int max_io) = 0;
   public:
     tpool():m_aio(){}
-    virtual void submit(const task* tasks, int size) = 0;
-    void submit(const task& t) { submit(&t,1); }
+    virtual void submit(const task& t) = 0;
     int configure_aio(bool use_native_aio, int max_io)
     {
       if (use_native_aio)
@@ -102,12 +99,12 @@ protected:
     {
       return m_aio->submit_aio(cb);
     }
-    virtual void set_max_threads(int max) = 0;
-    virtual void set_min_threads(int min) = 0;
     virtual ~tpool(){ delete m_aio;}
   };
-  extern tpool* create_tpool_generic();
+  const int DEFAULT_MIN_POOL_THREADS=1;
+  const int DEFAULT_MAX_POOL_THHREADS=500;
+  extern tpool* create_tpool_generic(int min_threads= DEFAULT_MIN_POOL_THREADS, int max_threads = DEFAULT_MAX_POOL_THHREADS);
 #ifdef _WIN32
-  extern tpool* create_tpool_win();
+  extern tpool* create_tpool_win(int min_threads = DEFAULT_MIN_POOL_THREADS, int max_threads = DEFAULT_MAX_POOL_THHREADS);
 #endif
 }

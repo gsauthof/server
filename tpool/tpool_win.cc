@@ -78,14 +78,27 @@ class tpool_win : public tpool
   PTP_POOL m_pool;
   TP_CALLBACK_ENVIRON m_env;
   PTP_CLEANUP_GROUP m_cleanup;
+  const int TASK_CACHE_SIZE=10000;
+
+  struct task_cache_entry
+  {
+    cache<task_cache_entry> *m_cache;
+    task m_task;
+  };
+  cache<task_cache_entry> m_task_cache;
+
 public:
-  tpool_win()
+  tpool_win(int min_threads = 0, int max_threads = 0):m_task_cache(TASK_CACHE_SIZE)
   {
     InitializeThreadpoolEnvironment(&m_env);
     m_pool = CreateThreadpool(NULL);
     m_cleanup = CreateThreadpoolCleanupGroup();
     SetThreadpoolCallbackPool(&m_env, m_pool);
     SetThreadpoolCallbackCleanupGroup(&m_env, m_cleanup, 0);
+    if (min_threads)
+      SetThreadpoolThreadMinimum(m_pool, min_threads);
+    if (max_threads)
+     SetThreadpoolThreadMaximum(m_pool, max_threads);
   }
   ~tpool_win()
   {
@@ -93,29 +106,31 @@ public:
     CloseThreadpoolCleanupGroup(m_cleanup);
     CloseThreadpool(m_pool);
   }
-  virtual void submit(const task *tasks, int size) override
+  static void CALLBACK task_callback(PTP_CALLBACK_INSTANCE, void *param)
   {
-    for (auto i= 0; i < size; i++)
-    {
-      if (!TrySubmitThreadpoolCallback(tasks[i].m_func, tasks[i].m_arg, &m_env))
+    auto entry = (task_cache_entry *)param;
+    auto task= entry->m_task;
+    entry->m_cache->put(entry);
+
+    task.m_func(task.m_arg);
+  }
+  virtual void submit(const task &task) override
+  {
+    auto entry = m_task_cache.get();
+    entry->m_cache = &m_task_cache;
+    entry->m_task = task;
+    if (!TrySubmitThreadpoolCallback(task_callback, entry, &m_env))
         abort();
-    }
   }
 
   virtual aio *create_native_aio(int max_io) override
   {
     return new tpool_win_aio(&m_env,max_io);
   }
-
-  virtual void set_max_threads(int n) override
-  {
-    SetThreadpoolThreadMaximum(m_pool,n);
-  }
-  virtual void set_min_threads(int n) override
-  {
-    SetThreadpoolThreadMinimum(m_pool,n);
-  }
 };
 
-tpool *create_tpool_win() { return new tpool_win(); }
+tpool *create_tpool_win(int min_threads, int max_threads)
+{ 
+  return new tpool_win(min_threads, max_threads); 
+}
 } // namespace tpool

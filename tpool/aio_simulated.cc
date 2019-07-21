@@ -3,7 +3,7 @@
 #include <unistd.h> /* pread(), pwrite() */
 #endif
 #include <string.h>
-#include <tpool.h>
+#include "tpool.h"
 #include "tpool_structs.h"
 #include <stdlib.h>
 
@@ -77,7 +77,7 @@ public:
   {
   }
  
-  static void CALLBACK simulated_aio_callback(PTP_CALLBACK_INSTANCE, void* param)
+  static void simulated_aio_callback(void* param)
   {
     aiocb* cb= (aiocb*)param;
     int ret_len;
@@ -111,7 +111,7 @@ public:
     auto cb =  m_cache.get();
     *cb = *aiocb;
     cb->m_internal = this;
-    m_pool->submit({simulated_aio_callback, cb});
+    m_pool->submit({simulated_aio_callback,cb});
     return 0;
   }
   virtual int bind(native_file_handle& fd) override

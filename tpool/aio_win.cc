@@ -40,7 +40,7 @@ public:
     m_cache.put(cb);
   }
 
-  static void io_completion_task(PTP_CALLBACK_INSTANCE, void* data)
+  static void io_completion_task(void* data)
   {
     auto cb = (generic_win_aiocb*)data;
     auto aio = (tpool_generic_win_aio*)cb->m_aiocb.m_internal;

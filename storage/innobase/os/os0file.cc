@@ -80,7 +80,9 @@ Created 10/21/1995 Heikki Tuuri
 #include <tpool.h>
 
 static tpool::tpool *pool;
-static Atomic_counter<int> pending_writes;
+static tpool::tpool *read_pool;
+
+static Atomic_counter<int> pending_aio_writes;
 
 /** Insert buffer segment id */
 static const ulint IO_IBUF_SEGMENT = 0;
@@ -3959,7 +3961,7 @@ extern void fil_aio_callback(const tpool::aiocb *cb, int ret_len, int err);
 static void io_callback(const tpool::aiocb* cb, int ret_len, int err)
 {
   if (cb->m_opcode == tpool::AIO_PWRITE)
-    pending_writes--;
+    pending_aio_writes--;
   fil_aio_callback(cb,ret_len, err);
 }
 
@@ -4091,9 +4093,10 @@ static bool is_linux_native_aio_supported()
 #endif
 
 
-bool os_aio_init(ulint n_reader_threads, ulint n_writer_thread, ulint)
+bool os_aio_init(ulint n_reader_threads, ulint n_writer_threads, ulint)
 {
-  int max_io_events = (int)((n_reader_threads + n_reader_threads) * (8 * OS_AIO_N_PENDING_IOS_PER_THREAD));
+  int max_write_events = (int)n_writer_threads * 256;
+  int max_read_events = (int)n_reader_threads * 256;
 #ifdef _WIN32
   pool = tpool::create_tpool_win();
 #else
@@ -4106,7 +4109,7 @@ bool os_aio_init(ulint n_reader_threads, ulint n_writer_thread, ulint)
     srv_use_native_aio = false;
 #endif
 
-  ret = pool->configure_aio(srv_use_native_aio, max_io_events);
+  ret = pool->configure_aio(srv_use_native_aio, max_write_events);
   if(ret)
   {
     DBUG_ASSERT(srv_use_native_aio);
@@ -4114,15 +4117,22 @@ bool os_aio_init(ulint n_reader_threads, ulint n_writer_thread, ulint)
 #ifdef LINUX_NATIVE_AIO
     ib::info() << "Linux native AIO disabled";
 #endif
-    ret = pool->configure_aio(srv_use_native_aio, max_io_events);
+    ret = pool->configure_aio(srv_use_native_aio, max_write_events);
     DBUG_ASSERT(!ret);
   }
+
+  read_pool = tpool::create_tpool_generic((int)n_reader_threads, (int)n_reader_threads);
+  read_pool->configure_aio(false, max_read_events);
+
   return true;
 }
 
 void os_aio_free(void)
 {
    delete pool;
+   delete read_pool;
+   pool = nullptr;
+   read_pool = nullptr;
 }
 
 /** Waits until there are no pending writes. There can
@@ -4130,7 +4140,7 @@ be other, synchronous, pending writes. */
 void
 os_aio_wait_until_no_pending_writes()
 {
-	while(pending_writes)
+	while(pending_aio_writes)
    os_thread_sleep(1000);
 }
 
@@ -4216,14 +4226,24 @@ os_aio_func(
   cb.m_opcode = type.is_read() ? tpool::AIO_PREAD : tpool::AIO_PWRITE;
   memcpy(cb.m_userdata, &userdata, sizeof(userdata));
 
-  if (cb.m_opcode == tpool::AIO_PWRITE)
-    pending_writes++;
+  tpool::tpool *tp;
 
-  if (!pool->submit_io(&cb))
+  if (cb.m_opcode == tpool::AIO_PWRITE)
+  {
+    pending_aio_writes++;
+    tp= pool;
+  }
+  else
+  {
+    // reads go to another pool, to prevent  deadlocks.
+    tp= read_pool;
+  }
+
+  if (!tp->submit_io(&cb))
     return DB_SUCCESS;
   
   if(cb.m_opcode == tpool::AIO_PWRITE)
-    pending_writes--;
+    pending_aio_writes--;
 
   os_file_handle_error(name, type.is_read() ? "aio read" : "aio write");
 

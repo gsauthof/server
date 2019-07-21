@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <assert.h>
-#include <tpool.h>
+#include "tpool.h"
 #include <thread>
 
 namespace tpool
@@ -26,7 +26,7 @@ class aio_linux : public aio
   bool m_in_shutdown;
   std::thread m_getevent_thread;
 
-  static void CALLBACK execute_io_completion(PTP_CALLBACK_INSTANCE, void* param)
+  static void execute_io_completion(void* param)
   {
     linux_iocb* cb = (linux_iocb*)param;
     aio_linux* aio = (aio_linux*)cb->m_aiocb.m_internal;

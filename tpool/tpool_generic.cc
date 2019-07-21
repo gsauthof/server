@@ -1,4 +1,5 @@
 #include "tpool_structs.h"
+#include <limits.h>
 #include <algorithm>
 #include <assert.h>
 #include <atomic>
@@ -11,7 +12,7 @@
 #include <stack>
 #include <thread>
 #include <vector>
-#include <tpool.h>
+#include "tpool.h"
 #include <assert.h>
 
 namespace tpool
@@ -35,7 +36,7 @@ struct worker_data
 
 class tpool_generic : public tpool
 {
-  circular_queue<task> m_tasks;
+  circular_queue<task> m_task_queue;
   std::vector<worker_data *> m_standby_threads;
   std::mutex m_mtx;
   std::chrono::milliseconds m_thread_timeout;
@@ -43,7 +44,7 @@ class tpool_generic : public tpool
   std::condition_variable m_cv_no_active_threads;
   std::condition_variable m_cv_no_threads;
   std::condition_variable m_cv_queue_not_full;
-  std::condition_variable m_cv_shutdown;
+  std::condition_variable m_cv_timer;
   std::thread m_timer_thread;
   int m_threads;
   int m_active_threads;
@@ -52,6 +53,7 @@ class tpool_generic : public tpool
   int m_spurious_wakeups;
   int m_concurrency;
   bool m_in_shutdown;
+  bool m_timer_on;
   bool m_stopped;
   int m_min_threads;
   int m_max_threads;
@@ -68,11 +70,9 @@ class tpool_generic : public tpool
   void timer_start();
   void timer_stop();
 public:
-  tpool_generic();
+  tpool_generic(int min_threads, int max_threads);
   ~tpool_generic() { shutdown(); }
-  void submit(const task *tasks, int size);
-  void set_min_threads(int);
-  void set_max_threads(int);
+  void submit(const task &tasks);
   void shutdown();
 
   // Inherited via tpool
@@ -91,7 +91,7 @@ public:
 bool tpool_generic::wait_for_tasks(std::unique_lock<std::mutex> &lk,
                                    worker_data *thread_data)
 {
-  assert(m_tasks.empty());
+  assert(m_task_queue.empty());
   assert(!m_in_shutdown);
 
   thread_data->m_wake_reason= WAKE_REASON_NONE;
@@ -123,13 +123,13 @@ bool tpool_generic::wait_for_tasks(std::unique_lock<std::mutex> &lk,
     return false;
   }
 
-  return !m_tasks.empty() && m_threads >= m_min_threads;
+  return !m_task_queue.empty() && m_threads >= m_min_threads;
 }
 
 bool tpool_generic::get_task(worker_data *thread_var, task *t)
 {
   std::unique_lock<std::mutex> lk(m_mtx);
-  if (m_tasks.empty())
+  if (m_task_queue.empty())
   {
     if (m_in_shutdown)
       return false;
@@ -145,13 +145,13 @@ bool tpool_generic::get_task(worker_data *thread_var, task *t)
     if (thread_var->m_wake_reason == WAKE_REASON_DIE)
       return false;
 
-    if (m_tasks.empty())
+    if (m_task_queue.empty())
       return false;
   }
 
-  bool was_full= m_tasks.full();
-  *t= m_tasks.front();
-  m_tasks.pop();
+  bool was_full= m_task_queue.full();
+  *t= m_task_queue.front();
+  m_task_queue.pop();
   m_tasks_dequeued++;
   if (was_full)
   {
@@ -179,7 +179,7 @@ void tpool_generic::worker_main()
 
   while (get_task(&thread_var, &task))
   {
-    task.m_func(0, task.m_arg);
+    task.m_func(task.m_arg);
   }
 
   worker_end();
@@ -192,11 +192,11 @@ void tpool_generic::timer_main()
   for (;;)
   {
     std::unique_lock<std::mutex> lk(m_mtx);
-    m_cv_shutdown.wait_for(lk, m_timer_interval);
+    m_cv_timer.wait_for(lk, m_timer_interval);
 
-    if (m_in_shutdown && m_tasks.empty())
+    if (!m_timer_on || (m_in_shutdown && m_task_queue.empty()))
       return;
-    if (m_tasks.empty())
+    if (m_task_queue.empty())
       continue;
 
     if (m_active_threads < m_concurrency)
@@ -205,7 +205,7 @@ void tpool_generic::timer_main()
       continue;
     }
 
-    if (!m_tasks.empty() && last_tasks_dequeued == m_tasks_dequeued &&
+    if (!m_task_queue.empty() && last_tasks_dequeued == m_tasks_dequeued &&
         last_threads <= m_threads && m_active_threads == m_threads)
     {
       // no progress made since last iteration. create new
@@ -252,62 +252,57 @@ bool tpool_generic::wake(worker_wake_reason reason, const task *t)
 void tpool_generic::timer_start()
 {
   m_timer_thread = std::thread(&tpool_generic::timer_main, this);
+  m_timer_on = true;
 }
 
 void tpool_generic::timer_stop()
 {
   assert(m_in_shutdown || m_max_threads == m_min_threads);
-  m_cv_shutdown.notify_one();
+  if(!m_timer_on)
+    return;
+  m_timer_on = false;
+  m_cv_timer.notify_one();
   m_timer_thread.join();
 }
 
-tpool_generic::tpool_generic()
-    : m_tasks(10000), m_standby_threads(), m_mtx(),
+tpool_generic::tpool_generic(int min_threads, int max_threads)
+    : m_task_queue(10000),
+      m_standby_threads(),
+      m_mtx(),
       m_thread_timeout(std::chrono::milliseconds(60000)),
-      m_timer_interval(std::chrono::milliseconds(10)), m_cv_no_threads(),
-      m_cv_shutdown(), m_threads(), m_active_threads(), m_tasks_dequeued(),
-      m_wakeups(), m_spurious_wakeups(),
-      m_concurrency(std::thread::hardware_concurrency()), m_in_shutdown(),
-      m_stopped(), m_min_threads(0), m_max_threads(INT_MAX)
+      m_timer_interval(std::chrono::milliseconds(10)),
+      m_cv_no_threads(),
+      m_cv_timer(),
+      m_threads(),
+      m_active_threads(),
+      m_tasks_dequeued(),
+      m_wakeups(),
+      m_spurious_wakeups(),
+      m_concurrency(std::thread::hardware_concurrency()),
+      m_in_shutdown(),
+      m_timer_on(),
+      m_stopped(),
+      m_min_threads(min_threads),
+      m_max_threads(max_threads)
 {
-  timer_start();
+  if (min_threads != max_threads)
+    timer_start();
+  if (max_threads < m_concurrency)
+    m_concurrency = m_max_threads;
+  if (min_threads > m_concurrency)
+    m_concurrency = min_threads;
+  if (!m_concurrency)
+    m_concurrency = 1;
 }
 
-void tpool_generic::set_min_threads(int n)
-{
-  std::unique_lock<std::mutex> lk(m_mtx);
-  if (n == m_min_threads)
-    return;
-
-
-  m_min_threads= n;
-  if (m_max_threads < n)
-    m_max_threads = n;
-
-  for (auto i= m_threads; i < m_min_threads; i++)
-    add_thread();
-}
-
-void tpool_generic::set_max_threads(int n)
-{
-  std::unique_lock<std::mutex> lk(m_mtx);
-  if (n == m_max_threads)
-    return;
-  m_max_threads= n;
-  if (n < m_min_threads)
-    m_min_threads = n;
-
-  for (auto i= m_max_threads; i < m_threads; i++)
-    wake(WAKE_REASON_DIE);
-}
 
 void tpool_generic::wake_or_create_thread()
 {
-  assert(!m_tasks.empty());
+  assert(!m_task_queue.empty());
   if (!m_standby_threads.empty())
   {
-    task &t= m_tasks.front();
-    m_tasks.pop();
+    task &t= m_task_queue.front();
+    m_task_queue.pop();
     wake(WAKE_REASON_TASK, &t);
   }
   else
@@ -316,25 +311,18 @@ void tpool_generic::wake_or_create_thread()
   }
 }
 
-void tpool_generic::submit(const task *tasks, int size)
+void tpool_generic::submit(const task &task)
 {
   std::unique_lock<std::mutex> lk(m_mtx);
 
-  for (auto i= 0; i < size; i++)
+  while (m_task_queue.full())
   {
-    while (m_tasks.full())
-    {
-      m_cv_queue_not_full.wait(lk);
-    }
-    if (m_in_shutdown)
-      return;
-    m_tasks.push(tasks[i]);
+    m_cv_queue_not_full.wait(lk);
   }
-
-  // int n = std::min(m_concurrency - m_active_threads, (int)m_tasks.size());
-
-  bool do_wake= m_active_threads < m_concurrency;
-  if (do_wake)
+  if (m_in_shutdown)
+    return;
+  m_task_queue.push(task);
+  if (m_active_threads < m_concurrency)
     wake_or_create_thread();
 }
 
@@ -363,5 +351,9 @@ void tpool_generic::shutdown()
   m_stopped= true;
 }
 
-tpool *create_tpool_generic() { return new tpool_generic(); }
+tpool *create_tpool_generic(int min_threads, int max_threads)
+{ 
+ return new tpool_generic(min_threads, max_threads);
+}
+
 } // namespace tpool
