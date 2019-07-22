@@ -5801,6 +5801,9 @@ int mysqld_main(int argc, char **argv)
       {
         wsrep_init_startup (false);
       }
+
+      WSREP_DEBUG("Startup creating %ld applier threads running %lu",
+	      wsrep_slave_threads - 1, wsrep_running_applier_threads);
       wsrep_create_appliers(wsrep_slave_threads - 1);
     }
   }

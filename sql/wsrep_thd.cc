@@ -74,6 +74,435 @@ static void wsrep_replication_process(THD *thd,
   delete thd->wsrep_rgi;
   thd->wsrep_rgi= NULL;
 
+<<<<<<< HEAD
+||||||| merged common ancestors
+void wsrep_replay_transaction(THD *thd)
+{
+  DBUG_ENTER("wsrep_replay_transaction");
+  /* checking if BF trx must be replayed */
+  if (thd->wsrep_conflict_state== MUST_REPLAY) {
+    DBUG_ASSERT(wsrep_thd_trx_seqno(thd));
+    if (thd->wsrep_exec_mode!= REPL_RECV) {
+      if (thd->get_stmt_da()->is_sent())
+      {
+        WSREP_ERROR("replay issue, thd has reported status already");
+      }
+
+
+      /*
+        PS reprepare observer should have been removed already.
+        open_table() will fail if we have dangling observer here.
+      */
+      DBUG_ASSERT(thd->m_reprepare_observer == NULL);
+
+      struct da_shadow
+      {
+          enum Diagnostics_area::enum_diagnostics_status status;
+          ulonglong affected_rows;
+          ulonglong last_insert_id;
+          char message[MYSQL_ERRMSG_SIZE];
+      };
+      struct da_shadow da_status;
+      da_status.status= thd->get_stmt_da()->status();
+      if (da_status.status == Diagnostics_area::DA_OK)
+      {
+        da_status.affected_rows= thd->get_stmt_da()->affected_rows();
+        da_status.last_insert_id= thd->get_stmt_da()->last_insert_id();
+        strmake(da_status.message,
+                thd->get_stmt_da()->message(),
+                sizeof(da_status.message)-1);
+      }
+
+      thd->get_stmt_da()->reset_diagnostics_area();
+
+      thd->wsrep_conflict_state= REPLAYING;
+      mysql_mutex_unlock(&thd->LOCK_thd_data);
+
+      thd->reset_for_next_command();
+      thd->reset_killed();
+      close_thread_tables(thd);
+      if (thd->locked_tables_mode && thd->lock)
+      {
+        WSREP_DEBUG("releasing table lock for replaying (%lld)",
+                    (longlong) thd->thread_id);
+        thd->locked_tables_list.unlock_locked_tables(thd);
+        thd->variables.option_bits&= ~(OPTION_TABLE_LOCK);
+      }
+      thd->mdl_context.release_transactional_locks();
+      /*
+        Replaying will call MYSQL_START_STATEMENT when handling
+        BEGIN Query_log_event so end statement must be called before
+        replaying.
+      */
+      MYSQL_END_STATEMENT(thd->m_statement_psi, thd->get_stmt_da());
+      thd->m_statement_psi= NULL;
+      thd->m_digest= NULL;
+      thd_proc_info(thd, "WSREP replaying trx");
+      WSREP_DEBUG("replay trx: %s %lld",
+                  thd->query() ? thd->query() : "void",
+                  (long long)wsrep_thd_trx_seqno(thd));
+      struct wsrep_thd_shadow shadow;
+      wsrep_prepare_bf_thd(thd, &shadow);
+
+      /* From trans_begin() */
+      thd->variables.option_bits|= OPTION_BEGIN;
+      thd->server_status|= SERVER_STATUS_IN_TRANS;
+
+      int rcode = wsrep->replay_trx(wsrep,
+                                    &thd->wsrep_ws_handle,
+                                    (void *)thd);
+
+      wsrep_return_from_bf_mode(thd, &shadow);
+      if (thd->wsrep_conflict_state!= REPLAYING)
+        WSREP_WARN("lost replaying mode: %d", thd->wsrep_conflict_state );
+
+      mysql_mutex_lock(&thd->LOCK_thd_data);
+
+      switch (rcode)
+      {
+      case WSREP_OK:
+        thd->wsrep_conflict_state= NO_CONFLICT;
+        wsrep->post_commit(wsrep, &thd->wsrep_ws_handle);
+        WSREP_DEBUG("trx_replay successful for: %lld %lld",
+                    (longlong) thd->thread_id, (longlong) thd->real_id);
+        if (thd->get_stmt_da()->is_sent())
+        {
+          WSREP_WARN("replay ok, thd has reported status");
+        }
+        else if (thd->get_stmt_da()->is_set())
+        {
+          if (thd->get_stmt_da()->status() != Diagnostics_area::DA_OK &&
+              thd->get_stmt_da()->status() != Diagnostics_area::DA_OK_BULK)
+          {
+            WSREP_WARN("replay ok, thd has error status %d",
+                       thd->get_stmt_da()->status());
+          }
+        }
+        else
+        {
+          if (da_status.status == Diagnostics_area::DA_OK)
+          {
+            my_ok(thd,
+                  da_status.affected_rows,
+                  da_status.last_insert_id,
+                  da_status.message);
+          }
+          else
+          {
+            my_ok(thd);
+          }
+        }
+        break;
+      case WSREP_TRX_FAIL:
+        if (thd->get_stmt_da()->is_sent())
+        {
+          WSREP_ERROR("replay failed, thd has reported status");
+        }
+        else
+        {
+          WSREP_DEBUG("replay failed, rolling back");
+        }
+        thd->wsrep_conflict_state= ABORTED;
+        wsrep->post_rollback(wsrep, &thd->wsrep_ws_handle);
+        break;
+      default:
+        WSREP_ERROR("trx_replay failed for: %d, schema: %s, query: %s",
+                    rcode, thd->get_db(),
+                    thd->query() ? thd->query() : "void");
+        /* we're now in inconsistent state, must abort */
+
+        /* http://bazaar.launchpad.net/~codership/codership-mysql/5.6/revision/3962#sql/wsrep_thd.cc */
+        mysql_mutex_unlock(&thd->LOCK_thd_data);
+
+        unireg_abort(1);
+        break;
+      }
+
+      wsrep_cleanup_transaction(thd);
+
+      mysql_mutex_lock(&LOCK_wsrep_replaying);
+      wsrep_replaying--;
+      WSREP_DEBUG("replaying decreased: %d, thd: %lld",
+                  wsrep_replaying, (longlong) thd->thread_id);
+      mysql_cond_broadcast(&COND_wsrep_replaying);
+      mysql_mutex_unlock(&LOCK_wsrep_replaying);
+    }
+  }
+  DBUG_VOID_RETURN;
+}
+
+static void wsrep_replication_process(THD *thd)
+{
+  int rcode;
+  DBUG_ENTER("wsrep_replication_process");
+
+  struct wsrep_thd_shadow shadow;
+  wsrep_prepare_bf_thd(thd, &shadow);
+
+  /* From trans_begin() */
+  thd->variables.option_bits|= OPTION_BEGIN;
+  thd->server_status|= SERVER_STATUS_IN_TRANS;
+
+  rcode = wsrep->recv(wsrep, (void *)thd);
+  DBUG_PRINT("wsrep",("wsrep_repl returned: %d", rcode));
+
+  WSREP_INFO("applier thread exiting (code:%d)", rcode);
+
+  switch (rcode) {
+  case WSREP_OK:
+  case WSREP_NOT_IMPLEMENTED:
+  case WSREP_CONN_FAIL:
+    /* provider does not support slave operations / disconnected from group,
+     * just close applier thread */
+    break;
+  case WSREP_NODE_FAIL:
+    /* data inconsistency => SST is needed */
+    /* Note: we cannot just blindly restart replication here,
+     * SST might require server restart if storage engines must be
+     * initialized after SST */
+    WSREP_ERROR("node consistency compromised, aborting");
+    wsrep_kill_mysql(thd);
+    break;
+  case WSREP_WARNING:
+  case WSREP_TRX_FAIL:
+  case WSREP_TRX_MISSING:
+    /* these suggests a bug in provider code */
+    WSREP_WARN("bad return from recv() call: %d", rcode);
+    /* Shut down this node. */
+    /* fall through */
+  case WSREP_FATAL:
+    /* Cluster connectivity is lost.
+     *
+     * If applier was killed on purpose (KILL_CONNECTION), we
+     * avoid mysql shutdown. This is because the killer will then handle
+     * shutdown processing (or replication restarting)
+     */
+    if (thd->killed != KILL_CONNECTION)
+    {
+      wsrep_kill_mysql(thd);
+    }
+    break;
+  }
+
+  mysql_mutex_lock(&LOCK_thread_count);
+  wsrep_close_applier(thd);
+  mysql_cond_broadcast(&COND_thread_count);
+  mysql_mutex_unlock(&LOCK_thread_count);
+=======
+void wsrep_replay_transaction(THD *thd)
+{
+  DBUG_ENTER("wsrep_replay_transaction");
+  /* checking if BF trx must be replayed */
+  if (thd->wsrep_conflict_state== MUST_REPLAY) {
+    DBUG_ASSERT(wsrep_thd_trx_seqno(thd));
+    if (thd->wsrep_exec_mode!= REPL_RECV) {
+      if (thd->get_stmt_da()->is_sent())
+      {
+        WSREP_ERROR("replay issue, thd has reported status already");
+      }
+
+
+      /*
+        PS reprepare observer should have been removed already.
+        open_table() will fail if we have dangling observer here.
+      */
+      DBUG_ASSERT(thd->m_reprepare_observer == NULL);
+
+      struct da_shadow
+      {
+          enum Diagnostics_area::enum_diagnostics_status status;
+          ulonglong affected_rows;
+          ulonglong last_insert_id;
+          char message[MYSQL_ERRMSG_SIZE];
+      };
+      struct da_shadow da_status;
+      da_status.status= thd->get_stmt_da()->status();
+      if (da_status.status == Diagnostics_area::DA_OK)
+      {
+        da_status.affected_rows= thd->get_stmt_da()->affected_rows();
+        da_status.last_insert_id= thd->get_stmt_da()->last_insert_id();
+        strmake(da_status.message,
+                thd->get_stmt_da()->message(),
+                sizeof(da_status.message)-1);
+      }
+
+      thd->get_stmt_da()->reset_diagnostics_area();
+
+      thd->wsrep_conflict_state= REPLAYING;
+      mysql_mutex_unlock(&thd->LOCK_thd_data);
+
+      thd->reset_for_next_command();
+      thd->reset_killed();
+      close_thread_tables(thd);
+      if (thd->locked_tables_mode && thd->lock)
+      {
+        WSREP_DEBUG("releasing table lock for replaying (%lld)",
+                    (longlong) thd->thread_id);
+        thd->locked_tables_list.unlock_locked_tables(thd);
+        thd->variables.option_bits&= ~(OPTION_TABLE_LOCK);
+      }
+      thd->mdl_context.release_transactional_locks();
+      /*
+        Replaying will call MYSQL_START_STATEMENT when handling
+        BEGIN Query_log_event so end statement must be called before
+        replaying.
+      */
+      MYSQL_END_STATEMENT(thd->m_statement_psi, thd->get_stmt_da());
+      thd->m_statement_psi= NULL;
+      thd->m_digest= NULL;
+      thd_proc_info(thd, "WSREP replaying trx");
+      WSREP_DEBUG("replay trx: %s %lld",
+                  thd->query() ? thd->query() : "void",
+                  (long long)wsrep_thd_trx_seqno(thd));
+      struct wsrep_thd_shadow shadow;
+      wsrep_prepare_bf_thd(thd, &shadow);
+
+      /* From trans_begin() */
+      thd->variables.option_bits|= OPTION_BEGIN;
+      thd->server_status|= SERVER_STATUS_IN_TRANS;
+
+      int rcode = wsrep->replay_trx(wsrep,
+                                    &thd->wsrep_ws_handle,
+                                    (void *)thd);
+
+      wsrep_return_from_bf_mode(thd, &shadow);
+      if (thd->wsrep_conflict_state!= REPLAYING)
+        WSREP_WARN("lost replaying mode: %d", thd->wsrep_conflict_state );
+
+      mysql_mutex_lock(&thd->LOCK_thd_data);
+
+      switch (rcode)
+      {
+      case WSREP_OK:
+        thd->wsrep_conflict_state= NO_CONFLICT;
+        wsrep->post_commit(wsrep, &thd->wsrep_ws_handle);
+        WSREP_DEBUG("trx_replay successful for: %lld %lld",
+                    (longlong) thd->thread_id, (longlong) thd->real_id);
+        if (thd->get_stmt_da()->is_sent())
+        {
+          WSREP_WARN("replay ok, thd has reported status");
+        }
+        else if (thd->get_stmt_da()->is_set())
+        {
+          if (thd->get_stmt_da()->status() != Diagnostics_area::DA_OK &&
+              thd->get_stmt_da()->status() != Diagnostics_area::DA_OK_BULK)
+          {
+            WSREP_WARN("replay ok, thd has error status %d",
+                       thd->get_stmt_da()->status());
+          }
+        }
+        else
+        {
+          if (da_status.status == Diagnostics_area::DA_OK)
+          {
+            my_ok(thd,
+                  da_status.affected_rows,
+                  da_status.last_insert_id,
+                  da_status.message);
+          }
+          else
+          {
+            my_ok(thd);
+          }
+        }
+        break;
+      case WSREP_TRX_FAIL:
+        if (thd->get_stmt_da()->is_sent())
+        {
+          WSREP_ERROR("replay failed, thd has reported status");
+        }
+        else
+        {
+          WSREP_DEBUG("replay failed, rolling back");
+        }
+        thd->wsrep_conflict_state= ABORTED;
+        wsrep->post_rollback(wsrep, &thd->wsrep_ws_handle);
+        break;
+      default:
+        WSREP_ERROR("trx_replay failed for: %d, schema: %s, query: %s",
+                    rcode, thd->get_db(),
+                    thd->query() ? thd->query() : "void");
+        /* we're now in inconsistent state, must abort */
+
+        /* http://bazaar.launchpad.net/~codership/codership-mysql/5.6/revision/3962#sql/wsrep_thd.cc */
+        mysql_mutex_unlock(&thd->LOCK_thd_data);
+
+        unireg_abort(1);
+        break;
+      }
+
+      wsrep_cleanup_transaction(thd);
+
+      mysql_mutex_lock(&LOCK_wsrep_replaying);
+      wsrep_replaying--;
+      WSREP_DEBUG("replaying decreased: %d, thd: %lld",
+                  wsrep_replaying, (longlong) thd->thread_id);
+      mysql_cond_broadcast(&COND_wsrep_replaying);
+      mysql_mutex_unlock(&LOCK_wsrep_replaying);
+    }
+  }
+  DBUG_VOID_RETURN;
+}
+
+static void wsrep_replication_process(THD *thd)
+{
+  int rcode;
+  DBUG_ENTER("wsrep_replication_process");
+
+  struct wsrep_thd_shadow shadow;
+  wsrep_prepare_bf_thd(thd, &shadow);
+
+  /* From trans_begin() */
+  thd->variables.option_bits|= OPTION_BEGIN;
+  thd->server_status|= SERVER_STATUS_IN_TRANS;
+
+  thd_proc_info(thd, "wsrep applier idle");
+  rcode = wsrep->recv(wsrep, (void *)thd);
+  DBUG_PRINT("wsrep",("wsrep_repl returned: %d", rcode));
+
+  WSREP_INFO("applier thread exiting (code:%d)", rcode);
+
+  switch (rcode) {
+  case WSREP_OK:
+  case WSREP_NOT_IMPLEMENTED:
+  case WSREP_CONN_FAIL:
+    /* provider does not support slave operations / disconnected from group,
+     * just close applier thread */
+    break;
+  case WSREP_NODE_FAIL:
+    /* data inconsistency => SST is needed */
+    /* Note: we cannot just blindly restart replication here,
+     * SST might require server restart if storage engines must be
+     * initialized after SST */
+    WSREP_ERROR("node consistency compromised, aborting");
+    wsrep_kill_mysql(thd);
+    break;
+  case WSREP_WARNING:
+  case WSREP_TRX_FAIL:
+  case WSREP_TRX_MISSING:
+    /* these suggests a bug in provider code */
+    WSREP_WARN("bad return from recv() call: %d", rcode);
+    /* Shut down this node. */
+    /* fall through */
+  case WSREP_FATAL:
+    /* Cluster connectivity is lost.
+     *
+     * If applier was killed on purpose (KILL_CONNECTION), we
+     * avoid mysql shutdown. This is because the killer will then handle
+     * shutdown processing (or replication restarting)
+     */
+    if (thd->killed != KILL_CONNECTION)
+    {
+      wsrep_kill_mysql(thd);
+    }
+    break;
+  }
+
+  mysql_mutex_lock(&LOCK_thread_count);
+  wsrep_close_applier(thd);
+  mysql_cond_broadcast(&COND_thread_count);
+  mysql_mutex_unlock(&LOCK_thread_count);
+>>>>>>> origin/10.3
 
   if(thd->has_thd_temporary_tables())
   {
@@ -83,13 +512,30 @@ static void wsrep_replication_process(THD *thd,
   DBUG_VOID_RETURN;
 }
 
+<<<<<<< HEAD
 static bool create_wsrep_THD(Wsrep_thd_args* args)
+||||||| merged common ancestors
+static bool create_wsrep_THD(wsrep_thd_processor_fun processor)
+=======
+static bool create_wsrep_THD(wsrep_thread_args* args)
+>>>>>>> origin/10.3
 {
   ulong old_wsrep_running_threads= wsrep_running_threads;
+<<<<<<< HEAD
   pthread_t unused;
 
   bool res= pthread_create(&unused, &connection_attrib, start_wsrep_THD,
                            args);
+||||||| merged common ancestors
+  pthread_t unused;
+  mysql_mutex_lock(&LOCK_thread_count);
+  bool res= pthread_create(&unused, &connection_attrib, start_wsrep_THD,
+                           (void*)processor);
+=======
+  mysql_mutex_lock(&LOCK_thread_count);
+  bool res= pthread_create(&args->thread_id, &connection_attrib, start_wsrep_THD,
+                           (void*)args);
+>>>>>>> origin/10.3
   /*
     if starting a thread on server startup, wait until the this thread's THD
     is fully initialized (otherwise a THD initialization code might
@@ -120,14 +566,38 @@ void wsrep_create_appliers(long threads)
   }
 
   long wsrep_threads=0;
+<<<<<<< HEAD
   
   while (wsrep_threads++ < threads)
   {
     Wsrep_thd_args* args(new Wsrep_thd_args(wsrep_replication_process, 0));
     if (create_wsrep_THD(args))
     {
-      WSREP_WARN("Can't create thread to manage wsrep replication");
+||||||| merged common ancestors
+  while (wsrep_threads++ < threads) {
+    if (create_wsrep_THD(wsrep_replication_process))
+=======
+  while (wsrep_threads++ < threads) {
+    wsrep_thread_args* arg;
+    if((arg = (wsrep_thread_args*)my_malloc(sizeof(wsrep_thread_args), MYF(0))) == NULL) {
+      WSREP_ERROR("Can't allocate memory for wsrep replication thread %ld\n", wsrep_threads);
+      assert(0);
     }
+
+    arg->thread_type = WSREP_APPLIER_THREAD;
+    arg->processor = wsrep_replication_process;
+
+    if (create_wsrep_THD(arg)) {
+>>>>>>> origin/10.3
+      WSREP_WARN("Can't create thread to manage wsrep replication");
+<<<<<<< HEAD
+    }
+||||||| merged common ancestors
+=======
+      my_free(arg);
+      return;
+    }
+>>>>>>> origin/10.3
   }
 }
 
@@ -278,8 +748,38 @@ static void wsrep_rollback_process(THD *rollbacker,
 static void wsrep_post_rollback_process(THD *post_rollbacker,
                                         void *arg __attribute__((unused)))
 {
+<<<<<<< HEAD
   DBUG_ENTER("wsrep_post_rollback_process");
   THD* thd= NULL;
+||||||| merged common ancestors
+  if (wsrep_provider && strcasecmp(wsrep_provider, "none"))
+  {
+    /* create rollbacker */
+    if (create_wsrep_THD(wsrep_rollback_process))
+      WSREP_WARN("Can't create thread to manage wsrep rollback");
+  }
+}
+=======
+  if (wsrep_provider && strcasecmp(wsrep_provider, "none"))
+  {
+    wsrep_thread_args* arg;
+    if((arg = (wsrep_thread_args*)my_malloc(sizeof(wsrep_thread_args), MYF(0))) == NULL) {
+      WSREP_ERROR("Can't allocate memory for wsrep rollbacker thread\n");
+      assert(0);
+    }
+
+    arg->thread_type = WSREP_ROLLBACKER_THREAD;
+    arg->processor = wsrep_rollback_process;
+
+    /* create rollbacker */
+    if (create_wsrep_THD(arg)) {
+      WSREP_WARN("Can't create thread to manage wsrep rollback");
+      my_free(arg);
+      return;
+    }
+  }
+}
+>>>>>>> origin/10.3
 
   WSREP_INFO("Starting post rollbacker thread %llu", post_rollbacker->thread_id);
   DBUG_ASSERT(!wsrep_post_rollback_queue);

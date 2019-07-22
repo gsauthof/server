@@ -47,6 +47,7 @@
 #include <string>
 #include "log_event.h"
 #include <slave.h>
+#include "sql_plugin.h"                         /* wsrep_plugins_pre_init() */
 
 #include <sstream>
 
@@ -153,7 +154,17 @@ mysql_mutex_t LOCK_wsrep_SR_pool;
 mysql_mutex_t LOCK_wsrep_SR_store;
 
 int wsrep_replaying= 0;
+<<<<<<< HEAD
 ulong  wsrep_running_threads= 0; // # of currently running wsrep threads
+||||||| merged common ancestors
+ulong  wsrep_running_threads = 0; // # of currently running wsrep threads
+=======
+ulong  wsrep_running_threads = 0; // # of currently running wsrep
+				  // # threads
+ulong  wsrep_running_applier_threads = 0; // # of running applier threads
+ulong  wsrep_running_rollbacker_threads = 0; // # of running
+					     // # rollbacker threads
+>>>>>>> origin/10.3
 ulong  my_bind_addr;
 
 #ifdef HAVE_PSI_INTERFACE
@@ -2167,6 +2178,294 @@ void wsrep_handle_mdl_conflict(MDL_context *requestor_ctx,
   }
 }
 
+<<<<<<< HEAD
+||||||| merged common ancestors
+
+pthread_handler_t start_wsrep_THD(void *arg)
+{
+  THD *thd;
+  wsrep_thd_processor_fun processor= (wsrep_thd_processor_fun)arg;
+
+  if (my_thread_init() || (!(thd= new THD(next_thread_id(), true))))
+  {
+    goto error;
+  }
+
+  mysql_mutex_lock(&LOCK_thread_count);
+
+  if (wsrep_gtid_mode)
+  {
+    /* Adjust domain_id. */
+    thd->variables.gtid_domain_id= wsrep_gtid_domain_id;
+  }
+
+  thd->real_id=pthread_self(); // Keep purify happy
+  thread_created++;
+  threads.append(thd);
+
+  my_net_init(&thd->net,(st_vio*) 0, thd, MYF(0));
+
+  DBUG_PRINT("wsrep",(("creating thread %lld"), (long long)thd->thread_id));
+  thd->prior_thr_create_utime= thd->start_utime= microsecond_interval_timer();
+  (void) mysql_mutex_unlock(&LOCK_thread_count);
+
+  /* from bootstrap()... */
+  thd->bootstrap=1;
+  thd->max_client_packet_length= thd->net.max_packet;
+  thd->security_ctx->master_access= ~(ulong)0;
+
+  /* from handle_one_connection... */
+  pthread_detach_this_thread();
+
+  mysql_thread_set_psi_id(thd->thread_id);
+  thd->thr_create_utime=  microsecond_interval_timer();
+  if (MYSQL_CALLBACK_ELSE(thread_scheduler, init_new_connection_thread, (), 0))
+  {
+    close_connection(thd, ER_OUT_OF_RESOURCES);
+    statistic_increment(aborted_connects,&LOCK_status);
+    MYSQL_CALLBACK(thread_scheduler, end_thread, (thd, 0));
+    goto error;
+  }
+
+// </5.1.17>
+  /*
+    handle_one_connection() is normally the only way a thread would
+    start and would always be on the very high end of the stack ,
+    therefore, the thread stack always starts at the address of the
+    first local variable of handle_one_connection, which is thd. We
+    need to know the start of the stack so that we could check for
+    stack overruns.
+  */
+  DBUG_PRINT("wsrep", ("handle_one_connection called by thread %lld\n",
+                       (long long)thd->thread_id));
+  /* now that we've called my_thread_init(), it is safe to call DBUG_* */
+
+  thd->thread_stack= (char*) &thd;
+  if (thd->store_globals())
+  {
+    close_connection(thd, ER_OUT_OF_RESOURCES);
+    statistic_increment(aborted_connects,&LOCK_status);
+    MYSQL_CALLBACK(thread_scheduler, end_thread, (thd, 0));
+    goto error;
+  }
+
+  thd->system_thread= SYSTEM_THREAD_SLAVE_SQL;
+  thd->security_ctx->skip_grants();
+
+  /* handle_one_connection() again... */
+  //thd->version= refresh_version;
+  thd->proc_info= 0;
+  thd->set_command(COM_SLEEP);
+  thd->init_for_queries();
+
+  mysql_mutex_lock(&LOCK_thread_count);
+  wsrep_running_threads++;
+  mysql_cond_broadcast(&COND_thread_count);
+  mysql_mutex_unlock(&LOCK_thread_count);
+
+  processor(thd);
+
+  close_connection(thd, 0);
+
+  mysql_mutex_lock(&LOCK_thread_count);
+  wsrep_running_threads--;
+  WSREP_DEBUG("wsrep running threads now: %lu", wsrep_running_threads);
+  mysql_cond_broadcast(&COND_thread_count);
+  mysql_mutex_unlock(&LOCK_thread_count);
+
+  // Note: We can't call THD destructor without crashing
+  // if plugins have not been initialized. However, in most of the
+  // cases this means that pre SE initialization SST failed and
+  // we are going to exit anyway.
+  if (plugins_are_initialized)
+  {
+    net_end(&thd->net);
+    MYSQL_CALLBACK(thread_scheduler, end_thread, (thd, 1));
+  }
+  else
+  {
+    // TODO: lightweight cleanup to get rid of:
+    // 'Error in my_thread_global_end(): 2 threads didn't exit'
+    // at server shutdown
+  }
+
+  unlink_not_visible_thd(thd);
+  delete thd;
+  my_thread_end();
+  return(NULL);
+
+error:
+  WSREP_ERROR("Failed to create/initialize system thread");
+
+  /* Abort if its the first applier/rollbacker thread. */
+  if (!mysqld_server_initialized)
+    unireg_abort(1);
+  else
+    return NULL;
+}
+
+
+=======
+
+pthread_handler_t start_wsrep_THD(void *arg)
+{
+  THD *thd;
+  wsrep_thread_args* args= (wsrep_thread_args*)arg;
+  wsrep_thd_processor_fun processor= args->processor;
+
+  if (my_thread_init() || (!(thd= new THD(next_thread_id(), true))))
+  {
+    goto error;
+  }
+
+  mysql_mutex_lock(&LOCK_thread_count);
+
+  if (wsrep_gtid_mode)
+  {
+    /* Adjust domain_id. */
+    thd->variables.gtid_domain_id= wsrep_gtid_domain_id;
+  }
+
+  thd->real_id=pthread_self(); // Keep purify happy
+  thread_created++;
+  threads.append(thd);
+
+  my_net_init(&thd->net,(st_vio*) 0, thd, MYF(0));
+
+  DBUG_PRINT("wsrep",(("creating thread %lld"), (long long)thd->thread_id));
+  thd->prior_thr_create_utime= thd->start_utime= microsecond_interval_timer();
+  (void) mysql_mutex_unlock(&LOCK_thread_count);
+
+  /* from bootstrap()... */
+  thd->bootstrap=1;
+  thd->max_client_packet_length= thd->net.max_packet;
+  thd->security_ctx->master_access= ~(ulong)0;
+
+  /* from handle_one_connection... */
+  pthread_detach_this_thread();
+
+  mysql_thread_set_psi_id(thd->thread_id);
+  thd->thr_create_utime=  microsecond_interval_timer();
+  if (MYSQL_CALLBACK_ELSE(thread_scheduler, init_new_connection_thread, (), 0))
+  {
+    close_connection(thd, ER_OUT_OF_RESOURCES);
+    statistic_increment(aborted_connects,&LOCK_status);
+    MYSQL_CALLBACK(thread_scheduler, end_thread, (thd, 0));
+    goto error;
+  }
+
+// </5.1.17>
+  /*
+    handle_one_connection() is normally the only way a thread would
+    start and would always be on the very high end of the stack ,
+    therefore, the thread stack always starts at the address of the
+    first local variable of handle_one_connection, which is thd. We
+    need to know the start of the stack so that we could check for
+    stack overruns.
+  */
+  DBUG_PRINT("wsrep", ("handle_one_connection called by thread %lld\n",
+                       (long long)thd->thread_id));
+  /* now that we've called my_thread_init(), it is safe to call DBUG_* */
+
+  thd->thread_stack= (char*) &thd;
+  if (thd->store_globals())
+  {
+    close_connection(thd, ER_OUT_OF_RESOURCES);
+    statistic_increment(aborted_connects,&LOCK_status);
+    MYSQL_CALLBACK(thread_scheduler, end_thread, (thd, 0));
+    goto error;
+  }
+
+  thd->system_thread= SYSTEM_THREAD_SLAVE_SQL;
+  thd->security_ctx->skip_grants();
+
+  /* handle_one_connection() again... */
+  //thd->version= refresh_version;
+  thd->proc_info= 0;
+  thd->set_command(COM_SLEEP);
+  thd->init_for_queries();
+
+  mysql_mutex_lock(&LOCK_thread_count);
+  wsrep_running_threads++;
+
+  switch (args->thread_type) {
+    case WSREP_APPLIER_THREAD:
+      wsrep_running_applier_threads++;
+      break;
+    case WSREP_ROLLBACKER_THREAD:
+      wsrep_running_rollbacker_threads++;
+      break;
+    default:
+      WSREP_ERROR("Incorrect wsrep thread type: %d", args->thread_type);
+      break;
+  }
+
+  mysql_cond_broadcast(&COND_thread_count);
+  mysql_mutex_unlock(&LOCK_thread_count);
+
+  processor(thd);
+
+  close_connection(thd, 0);
+
+  mysql_mutex_lock(&LOCK_thread_count);
+  DBUG_ASSERT(wsrep_running_threads > 0);
+  wsrep_running_threads--;
+
+  switch (args->thread_type) {
+    case WSREP_APPLIER_THREAD:
+      DBUG_ASSERT(wsrep_running_applier_threads > 0);
+      wsrep_running_applier_threads--;
+      break;
+    case WSREP_ROLLBACKER_THREAD:
+      DBUG_ASSERT(wsrep_running_rollbacker_threads > 0);
+      wsrep_running_rollbacker_threads--;
+      break;
+    default:
+      WSREP_ERROR("Incorrect wsrep thread type: %d", args->thread_type);
+      break;
+  }
+
+  my_free(args);
+
+  WSREP_DEBUG("wsrep running threads now: %lu", wsrep_running_threads);
+  mysql_cond_broadcast(&COND_thread_count);
+  mysql_mutex_unlock(&LOCK_thread_count);
+
+  // Note: We can't call THD destructor without crashing
+  // if plugins have not been initialized. However, in most of the
+  // cases this means that pre SE initialization SST failed and
+  // we are going to exit anyway.
+  if (plugins_are_initialized)
+  {
+    net_end(&thd->net);
+    MYSQL_CALLBACK(thread_scheduler, end_thread, (thd, 1));
+  }
+  else
+  {
+    // TODO: lightweight cleanup to get rid of:
+    // 'Error in my_thread_global_end(): 2 threads didn't exit'
+    // at server shutdown
+  }
+
+  unlink_not_visible_thd(thd);
+  delete thd;
+  my_thread_end();
+  return(NULL);
+
+error:
+  WSREP_ERROR("Failed to create/initialize system thread");
+
+  my_free(args);
+
+  /* Abort if its the first applier/rollbacker thread. */
+  if (!mysqld_server_initialized)
+    unireg_abort(1);
+  else
+    return NULL;
+}
+
+
+>>>>>>> origin/10.3
 /**/
 static bool abort_replicated(THD *thd)
 {

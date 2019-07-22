@@ -5,8 +5,14 @@
 CREATE USER 'userMW416'@'localhost';
 GRANT SELECT, INSERT, UPDATE ON test.* TO 'userMW416'@'localhost';
 
+<<<<<<< HEAD
 --let $wsrep_replicated_before = `SELECT variable_value FROM information_schema.global_status WHERE variable_name = 'wsrep_replicated'`
 
+||||||| merged common ancestors
+SHOW GLOBAL STATUS LIKE 'wsrep_replicated';
+
+=======
+>>>>>>> origin/10.3
 --connect userMW416, localhost, userMW416,, test, $NODE_MYPORT_1
 --connection userMW416
 
@@ -130,7 +136,13 @@ UNINSTALL PLUGIN plg;
 --connection node_1
 DROP USER 'userMW416'@'localhost';
 SHOW DATABASES;
+<<<<<<< HEAD
 --let $wsrep_replicated_after = `SELECT variable_value FROM information_schema.global_status WHERE variable_name = 'wsrep_replicated'`
 --disable_query_log
 --eval SELECT $wsrep_replicated_after - $wsrep_replicated_before AS wsrep_replicated_after_diff
 --enable_query_log
+||||||| merged common ancestors
+SHOW GLOBAL STATUS LIKE 'wsrep_replicated';
+=======
+
+>>>>>>> origin/10.3

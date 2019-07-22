@@ -33,6 +33,7 @@ typedef struct st_mysql_show_var SHOW_VAR;
 #include "mdl.h"
 #include "sql_table.h"
 #include "wsrep_mysqld_c.h"
+#include <vector>
 
 #include "wsrep/provider.hpp"
 #include "wsrep/streaming_context.hpp"
@@ -93,6 +94,8 @@ extern ulong       wsrep_trx_fragment_unit;
 extern ulong       wsrep_SR_store_type;
 extern uint        wsrep_ignore_apply_errors;
 extern ulong       wsrep_running_threads;
+extern ulong       wsrep_running_applier_threads;
+extern ulong       wsrep_running_rollbacker_threads;
 extern bool        wsrep_new_cluster;
 extern bool        wsrep_gtid_mode;
 extern uint32      wsrep_gtid_domain_id;
@@ -356,7 +359,57 @@ int wsrep_create_event_query(THD *thd, uchar** buf, size_t* buf_len);
 
 bool wsrep_stmt_rollback_is_safe(THD* thd);
 
+<<<<<<< HEAD
 void wsrep_init_sidno(const wsrep_uuid_t&);
+||||||| merged common ancestors
+typedef void (*wsrep_thd_processor_fun)(THD *);
+pthread_handler_t start_wsrep_THD(void *arg);
+int wsrep_wait_committing_connections_close(int wait_time);
+extern void wsrep_close_client_connections(my_bool wait_to_end,
+                                           THD *except_caller_thd = NULL);
+void wsrep_close_applier(THD *thd);
+void wsrep_close_applier_threads(int count);
+void wsrep_wait_appliers_close(THD *thd);
+void wsrep_kill_mysql(THD *thd);
+void wsrep_close_threads(THD *thd);
+void wsrep_copy_query(THD *thd);
+bool wsrep_is_show_query(enum enum_sql_command command);
+void wsrep_replay_transaction(THD *thd);
+bool wsrep_create_like_table(THD* thd, TABLE_LIST* table,
+                             TABLE_LIST* src_table,
+	                     HA_CREATE_INFO *create_info);
+=======
+enum wsrep_thread_type {
+  WSREP_APPLIER_THREAD=1,
+  WSREP_ROLLBACKER_THREAD=2
+};
+
+typedef void (*wsrep_thd_processor_fun)(THD *);
+
+typedef struct {
+	pthread_t thread_id;
+	wsrep_thd_processor_fun processor;
+	enum wsrep_thread_type thread_type;
+} wsrep_thread_args;
+
+extern std::vector<wsrep_thread_args*> wsrep_thread_arg;
+
+pthread_handler_t start_wsrep_THD(void *arg);
+int wsrep_wait_committing_connections_close(int wait_time);
+extern void wsrep_close_client_connections(my_bool wait_to_end,
+                                           THD *except_caller_thd = NULL);
+void wsrep_close_applier(THD *thd);
+void wsrep_close_applier_threads(int count);
+void wsrep_wait_appliers_close(THD *thd);
+void wsrep_kill_mysql(THD *thd);
+void wsrep_close_threads(THD *thd);
+void wsrep_copy_query(THD *thd);
+bool wsrep_is_show_query(enum enum_sql_command command);
+void wsrep_replay_transaction(THD *thd);
+bool wsrep_create_like_table(THD* thd, TABLE_LIST* table,
+                             TABLE_LIST* src_table,
+	                     HA_CREATE_INFO *create_info);
+>>>>>>> origin/10.3
 bool wsrep_node_is_donor();
 bool wsrep_node_is_synced();
 

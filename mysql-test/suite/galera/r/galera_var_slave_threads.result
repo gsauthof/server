@@ -23,26 +23,43 @@ COUNT(*)
 SELECT COUNT(*) FROM INFORMATION_SCHEMA.PROCESSLIST WHERE USER = 'system user' AND STATE LIKE '%wsrep aborter%';
 COUNT(*)
 1
-SET GLOBAL wsrep_slave_threads = 64;
 connection node_1;
 INSERT INTO t1 VALUES (1);
 connection node_2;
+<<<<<<< HEAD
 SELECT COUNT(*) FROM t1;
 COUNT(*)
 1
 SELECT COUNT(*) FROM INFORMATION_SCHEMA.PROCESSLIST WHERE USER = 'system user' AND STATE LIKE '%wsrep aborter%';
 COUNT(*)
+||||||| merged common ancestors
+SELECT COUNT(*) = 1 FROM t1;
+COUNT(*) = 1
+=======
+SELECT COUNT(*) FROM t1;
+COUNT(*)
+>>>>>>> origin/10.3
 1
+SET GLOBAL wsrep_slave_threads = 64;
 SET GLOBAL wsrep_slave_threads = 1;
 connection node_1;
 connection node_2;
 SELECT COUNT(*) FROM t2;
 COUNT(*)
+<<<<<<< HEAD
 64
 SELECT COUNT(*) FROM INFORMATION_SCHEMA.PROCESSLIST WHERE USER = 'system user' AND STATE LIKE '%wsrep aborter%';
 COUNT(*)
 1
 SET GLOBAL wsrep_slave_threads = 5;
+||||||| merged common ancestors
+64
+SELECT COUNT(*) FROM INFORMATION_SCHEMA.PROCESSLIST WHERE USER = 'system user' AND STATE LIKE '%wsrep aborter%';
+COUNT(*)
+1
+=======
+70
+>>>>>>> origin/10.3
 SET GLOBAL wsrep_slave_threads = 1;
 connection node_2;
 Shutting down server ...
@@ -64,7 +81,25 @@ SET GLOBAL wsrep_slave_threads = 1;
 connection node_2;
 SET GLOBAL wsrep_slave_threads = 1;
 connection node_1;
+<<<<<<< HEAD
+||||||| merged common ancestors
+INSERT INTO t1 VALUES (DEFAULT);
+INSERT INTO t1 VALUES (DEFAULT);
+INSERT INTO t1 VALUES (DEFAULT);
+DROP TABLE t1;
+=======
+INSERT INTO t1 VALUES (DEFAULT);
+INSERT INTO t1 VALUES (DEFAULT);
+INSERT INTO t1 VALUES (DEFAULT);
+INSERT INTO t1 VALUES (DEFAULT);
+INSERT INTO t1 VALUES (DEFAULT);
+INSERT INTO t1 VALUES (DEFAULT);
+INSERT INTO t1 VALUES (DEFAULT);
+INSERT INTO t1 VALUES (DEFAULT);
+DROP TABLE t1;
+>>>>>>> origin/10.3
 connection node_2;
+<<<<<<< HEAD
 SELECT COUNT(*) FROM t1;
 COUNT(*)
 1
@@ -81,3 +116,14 @@ COUNT(*)
 DROP TABLE t1;
 DROP TABLE t2;
 # End of tests
+||||||| merged common ancestors
+SELECT NAME FROM INFORMATION_SCHEMA.INNODB_SYS_TABLES WHERE NAME LIKE 'test/t%';
+NAME
+SELECT COUNT(*) = 1 FROM INFORMATION_SCHEMA.PROCESSLIST WHERE USER = 'system user' AND STATE LIKE '%wsrep aborter%';
+COUNT(*) = 1
+1
+# End of tests
+=======
+SELECT NAME FROM INFORMATION_SCHEMA.INNODB_SYS_TABLES WHERE NAME LIKE 'test/t%';
+NAME
+>>>>>>> origin/10.3

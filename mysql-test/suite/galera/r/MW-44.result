@@ -1,6 +1,11 @@
+<<<<<<< HEAD
 connection node_2;
 connection node_1;
 connection node_1;
+||||||| merged common ancestors
+=======
+connection node_1;
+>>>>>>> origin/10.3
 TRUNCATE TABLE mysql.general_log;
 connection node_2;
 TRUNCATE TABLE mysql.general_log;

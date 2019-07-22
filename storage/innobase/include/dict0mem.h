@@ -1214,6 +1214,12 @@ struct dict_index_t {
 	bool
 	vers_history_row(const rec_t* rec, bool &history_row);
 
+	/** If a record of this index might not fit on a single B-tree page,
+	  return true.
+	@param[in]	strict	issue error or warning
+	@return true if the index record could become too big */
+	bool rec_potentially_too_big(bool strict) const;
+
 	/** Reconstruct the clustered index fields. */
 	inline void reconstruct_fields();
 
@@ -1775,6 +1781,9 @@ struct dict_table_t {
 		n_foreign_key_checks_running--;
 		ut_ad(fk_checks > 0);
 	}
+
+	/** For overflow fields returns potential max length stored inline */
+	inline size_t get_overflow_field_local_len() const;
 
 private:
 	/** Initialize instant->field_map.

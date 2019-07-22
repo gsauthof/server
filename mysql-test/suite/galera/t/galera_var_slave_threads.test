@@ -6,7 +6,7 @@
 
 --source include/galera_cluster.inc
 --source include/have_innodb.inc
---let $wsrep_slave_threads_orig = `SELECT @@wsrep_slave_threads`
+--source include/force_restart.inc
 
 # Save original auto_increment_offset values.
 --let $node_1=node_1
@@ -14,6 +14,7 @@
 --source include/auto_increment_offset_save.inc
 
 --connection node_1
+--let $wsrep_slave_threads_orig = `SELECT @@wsrep_slave_threads`
 CREATE TABLE t1 (f1 INT PRIMARY KEY) Engine=InnoDB;
 CREATE TABLE t2 (f1 INT AUTO_INCREMENT PRIMARY KEY) Engine=InnoDB;
 
@@ -29,25 +30,47 @@ SET GLOBAL wsrep_slave_threads = 1;
 SELECT COUNT(*) FROM INFORMATION_SCHEMA.PROCESSLIST WHERE USER = 'system user' AND COMMAND != 'Daemon';
 SELECT COUNT(*) FROM INFORMATION_SCHEMA.PROCESSLIST WHERE USER = 'system user' AND STATE LIKE '%wsrep aborter%';
 
-#
-# Increase the number of slave threads. The change takes effect immediately
-#
-
-SET GLOBAL wsrep_slave_threads = 64;
-
 --connection node_1
 INSERT INTO t1 VALUES (1);
 
 --connection node_2
+<<<<<<< HEAD
 SELECT COUNT(*) FROM t1;
+||||||| merged common ancestors
+--let $wait_timeout=600
+--let $wait_condition = SELECT COUNT(*) = 1 FROM t1;
+--source include/wait_condition.inc
+=======
 
+--let $wait_timeout=600
+--let $wait_condition = SELECT COUNT(*) = 1 FROM t1;
+--source include/wait_condition.inc
+>>>>>>> origin/10.3
+
+<<<<<<< HEAD
 #
 # note, in wsrep API #26, we have 2 rollbacker threads, counted as system user's
 #
+||||||| merged common ancestors
+SELECT COUNT(*) = 1 FROM t1;
+=======
+SELECT COUNT(*) FROM t1;
 
+#
+# Increase the number of slave threads. The change takes effect immediately
+#
+SET GLOBAL wsrep_slave_threads = 64;
+>>>>>>> origin/10.3
+
+<<<<<<< HEAD
 SELECT COUNT(*) FROM INFORMATION_SCHEMA.PROCESSLIST WHERE USER = 'system user' AND STATE LIKE '%wsrep aborter%';
 
 --let $wait_condition = SELECT VARIABLE_VALUE = @@wsrep_slave_threads + 2 FROM INFORMATION_SCHEMA.GLOBAL_STATUS WHERE VARIABLE_NAME = 'wsrep_thread_count';
+||||||| merged common ancestors
+--let $wait_condition = SELECT COUNT(*) = @@wsrep_slave_threads + 1 FROM INFORMATION_SCHEMA.PROCESSLIST WHERE USER = 'system user' AND (STATE IS NULL OR STATE NOT LIKE 'InnoDB%');
+=======
+--let $wait_condition = SELECT VARIABLE_VALUE = 64 FROM INFORMATION_SCHEMA.GLOBAL_STATUS WHERE VARIABLE_NAME = 'wsrep_applier_thread_count';
+>>>>>>> origin/10.3
 --source include/wait_condition.inc
 
 #
@@ -60,8 +83,8 @@ SET GLOBAL wsrep_slave_threads = 1;
 
 --disable_result_log
 --disable_query_log
-# Generate 64 replication events
---let $count = 64
+# Generate 70 replication events
+--let $count = 70
 while ($count)
 {
   INSERT INTO t2 VALUES (DEFAULT);
@@ -73,10 +96,20 @@ while ($count)
 --connection node_2
 SELECT COUNT(*) FROM t2;
 
+<<<<<<< HEAD
 SELECT COUNT(*) FROM INFORMATION_SCHEMA.PROCESSLIST WHERE USER = 'system user' AND STATE LIKE '%wsrep aborter%';
 
 --let $wait_condition = SELECT VARIABLE_VALUE = @@wsrep_slave_threads + 2 FROM INFORMATION_SCHEMA.GLOBAL_STATUS WHERE VARIABLE_NAME = 'wsrep_thread_count';
 --source include/wait_condition.inc
+||||||| merged common ancestors
+--let $wait_condition = SELECT COUNT(*) = @@wsrep_slave_threads + 1 FROM INFORMATION_SCHEMA.PROCESSLIST WHERE USER = 'system user' AND (STATE IS NULL OR STATE NOT LIKE 'InnoDB%')
+--source include/wait_condition.inc
+SELECT COUNT(*) FROM INFORMATION_SCHEMA.PROCESSLIST WHERE USER = 'system user' AND STATE LIKE '%wsrep aborter%';
+
+=======
+--let $wait_condition = SELECT VARIABLE_VALUE = 1 FROM INFORMATION_SCHEMA.GLOBAL_STATUS WHERE VARIABLE_NAME = 'wsrep_applier_thread_count';
+--source include/wait_condition.inc
+>>>>>>> origin/10.3
 
 --let $wsrep_cluster_address_node2 = `SELECT @@wsrep_cluster_address`
 --let $wsrep_provider_node2 = `SELECT @@wsrep_provider`
@@ -94,6 +127,7 @@ SET GLOBAL wsrep_slave_threads = 1;
 
 # shutdown node 2
 --connection node_2
+<<<<<<< HEAD
 --echo Shutting down server ...
 --source include/shutdown_mysqld.inc
 
@@ -101,6 +135,13 @@ SET GLOBAL wsrep_slave_threads = 1;
 --connection node_1
 
 --let $wait_condition = SELECT VARIABLE_VALUE = @@wsrep_slave_threads + 2 FROM INFORMATION_SCHEMA.GLOBAL_STATUS WHERE VARIABLE_NAME = 'wsrep_thread_count';
+||||||| merged common ancestors
+SET GLOBAL wsrep_slave_threads = 4;
+--let $wait_condition = SELECT COUNT(*) = @@wsrep_slave_threads + 1 FROM INFORMATION_SCHEMA.PROCESSLIST WHERE USER = 'system user' AND (STATE IS NULL OR STATE NOT LIKE 'InnoDB%')
+=======
+SET GLOBAL wsrep_slave_threads = 4;
+--let $wait_condition = SELECT VARIABLE_VALUE = 4 FROM INFORMATION_SCHEMA.GLOBAL_STATUS WHERE VARIABLE_NAME = 'wsrep_applier_thread_count';
+>>>>>>> origin/10.3
 --source include/wait_condition.inc
 show status like 'wsrep_cluster_size';
 
@@ -113,14 +154,34 @@ SET GLOBAL wsrep_slave_threads = 6;
 SET GLOBAL wsrep_slave_threads = 1;
 SET GLOBAL wsrep_cluster_address='';
 
+<<<<<<< HEAD
 # join back to single node cluster
 SET GLOBAL wsrep_cluster_address='gcomm://';
 --source include/wait_until_connected_again.inc
+||||||| merged common ancestors
+--connection node_1
+INSERT INTO t1 VALUES (DEFAULT);
+INSERT INTO t1 VALUES (DEFAULT);
+INSERT INTO t1 VALUES (DEFAULT);
+DROP TABLE t1;
+=======
+--connection node_1
+INSERT INTO t1 VALUES (DEFAULT);
+INSERT INTO t1 VALUES (DEFAULT);
+INSERT INTO t1 VALUES (DEFAULT);
+INSERT INTO t1 VALUES (DEFAULT);
+INSERT INTO t1 VALUES (DEFAULT);
+INSERT INTO t1 VALUES (DEFAULT);
+INSERT INTO t1 VALUES (DEFAULT);
+INSERT INTO t1 VALUES (DEFAULT);
+DROP TABLE t1;
+>>>>>>> origin/10.3
 
 # we should have 1 applier thread now
 --let $wait_condition = SELECT COUNT(*) = @@wsrep_slave_threads + 2 FROM INFORMATION_SCHEMA.PROCESSLIST WHERE USER = 'system user' AND COMMAND != 'Daemon'
 --source include/wait_condition.inc
 
+<<<<<<< HEAD
 # test if we can increase applier count now (fails in bug #319)
 SET GLOBAL wsrep_slave_threads = 10;
 --let $wait_condition = SELECT VARIABLE_VALUE = @@wsrep_slave_threads + 2 FROM INFORMATION_SCHEMA.GLOBAL_STATUS WHERE VARIABLE_NAME = 'wsrep_thread_count';
@@ -134,9 +195,20 @@ SET GLOBAL wsrep_slave_threads = 10;
 SELECT COUNT(*) FROM INFORMATION_SCHEMA.PROCESSLIST WHERE USER = 'system user' AND COMMAND != 'Daemon';
 
 # 
+||||||| merged common ancestors
+# Wait until above DDL is replicated
+--let $wait_condition = SELECT COUNT(*) = 0 FROM INFORMATION_SCHEMA.INNODB_SYS_TABLES WHERE NAME LIKE 'test/t%';
+--source include/wait_condition.inc
+
+SELECT NAME FROM INFORMATION_SCHEMA.INNODB_SYS_TABLES WHERE NAME LIKE 'test/t%';
+
+=======
+# Wait until above DDL is replicated
+>>>>>>> origin/10.3
 #
 # cleanup to original state
 #
+<<<<<<< HEAD
 --connection node_1
 --eval SET GLOBAL wsrep_slave_threads = $wsrep_slave_threads_orig
 
@@ -170,7 +242,13 @@ while ($count)
 --enable_result_log
 
 --let $wait_condition = SELECT VARIABLE_VALUE = @@wsrep_slave_threads + 2 FROM INFORMATION_SCHEMA.GLOBAL_STATUS WHERE VARIABLE_NAME = 'wsrep_thread_count';
+||||||| merged common ancestors
+--let $wait_condition = SELECT COUNT(*) = 2 FROM INFORMATION_SCHEMA.PROCESSLIST WHERE USER = 'system user' AND (STATE IS NULL OR STATE NOT LIKE 'InnoDB%')
+=======
+--let $wait_condition = SELECT VARIABLE_VALUE = 1 FROM INFORMATION_SCHEMA.GLOBAL_STATUS WHERE VARIABLE_NAME = 'wsrep_applier_thread_count';
+>>>>>>> origin/10.3
 --source include/wait_condition.inc
+<<<<<<< HEAD
 
 
 --connection node_2
@@ -190,5 +268,9 @@ DROP TABLE t2;
 
 # Restore original auto_increment_offset values.
 --source include/auto_increment_offset_restore.inc
+||||||| merged common ancestors
+SELECT COUNT(*) = 1 FROM INFORMATION_SCHEMA.PROCESSLIST WHERE USER = 'system user' AND STATE LIKE '%wsrep aborter%';
+=======
+>>>>>>> origin/10.3
 
---echo # End of tests
+SELECT NAME FROM INFORMATION_SCHEMA.INNODB_SYS_TABLES WHERE NAME LIKE 'test/t%';
