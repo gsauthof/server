@@ -80,7 +80,7 @@ class aio_linux : public aio
 public:
   aio_linux(io_context_t ctx, tpool* pool, size_t max_count)
     : m_max_io_count(max_count), m_pool(pool), m_io_ctx(ctx),
-    m_cache(max_count), m_getevent_thread(getevent_thread_routine, this)
+    m_cache(max_count), m_in_shutdown(), m_getevent_thread(getevent_thread_routine, this)
   {
   }
 
